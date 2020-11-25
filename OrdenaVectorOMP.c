@@ -22,7 +22,7 @@ float vini[VECT_SIZE], vord0[VECT_SIZE], vord[VECT_SIZE]; // vector desordenado 
 void copiarVector(float Vdest[], float V[], int size)
 {
 	int i;
-#pragma omp parallel for schedule(dynamic)
+	#pragma omp parallel for schedule(dynamic)
 	for (i = 0; i < size; ++i)
 		Vdest[i] = V[i];
 }
@@ -39,33 +39,19 @@ void printVector(float vector[], int size)
 	printf("\n\n");
 }
 
-// int estaOrdenado(float vector[], int size)
-// {
-/* Comenzamos a paralelizar el bucle y para ello la primera transformación que hicimos fue pasar de un bucle do-while,
+int estaOrdenado(float vector[], int size)
+{
+    /* Comenzamos a paralelizar el bucle y para ello la primera transformación que hicimos fue pasar de un bucle do-while,
 	 * a un bucle for cuya condición era la que este bucle while tiene. Nos dimos cuenta que OpenMP no permitía este tipo de condiciones
 	 * al desconocer el numero de iteraciones que realiza. Entonces convertimo el bucle en uno cuya cabecera era for(i=1; i<size; i++) y con
 	 * if nos permitía saber si el orden del vector era creciente y en ese caso continuar o por el contrario salirnos con la sentencia "break".
 	 * Lo que nos llevó a una segunda apreciación y es que dicha llamada no está permitida al manejar varios hilos de ejecución.
-	 * La DECISIÓN FINAL fue modificar el bucle inicial al que abajo se muestra sin comentar.
+	 * La CONCLUSIÓN FINAL fue que llegamos a la conclusión de que este bucle no es paralelizable.
 	 */
-//   int i=0;
-//   do i++; while ((vector[i-1]<=vector[i])&&(i<size-1));
+  int i=0;
+  do i++; while ((vector[i-1]<=vector[i])&&(i<size-1));
 
-//   return ((i==size-1)&&(vector[i-1]<=vector[i]));	// TRUE (1) si el vector está ordenado y FALSE (0) en caso contrario
-// }
-
-int estaOrdenado(float vector[], int size)
-{
-	int i;
-	int bool = 1;
-
-#pragma omp parallel for schedule(dynamic)
-	for (i = 1; i < size; i++)
-	{
-		if (vector[i - 1] >= vector[i])
-			bool = 0;
-	}
-	return bool;
+  return ((i==size-1)&&(vector[i-1]<=vector[i]));	// TRUE (1) si el vector está ordenado y FALSE (0) en caso contrario
 }
 
 int vectoresIguales(float vecta[], float vectb[], int size)
@@ -107,7 +93,7 @@ void mezcla_ordenada(float vector[], int ini1, int ini2, int fin2)
 			/* Rotamos vector[i], vector[i+1], ...,vector[j-1], vector[j]
 					 * para que vector[j] pase a la posición i y el resto se desplace una posición a la derecha */
 			temp = vector[j];
-      		#pragma omp parallel for schedule(dynamic)
+     		#pragma omp parallel for schedule(dynamic)
 			for (k = j; k > i; k--)
 				vector[k] = vector[k - 1];
 			vector[i] = temp;
@@ -134,9 +120,12 @@ void mezcla_ordenada(float vector[], int ini1, int ini2, int fin2)
 void ord_secA(float vector[], int size)
 {
 	int incr, i, fin2;
-
+	/*
+	 * Este bucle for externo no se puede paralelizar ya que todavía no están ordenados los componentes del vector ya sean en grupos que 
+	 * la variable 'incr' dicta (2,4,8...) y cuyo orden dependen de que el bucle interno, cuyas iteraciones si han sido paralelizadas, termine correctamente. 
+	 */ 
 	for (incr = 2; incr < 2 * size; incr = 2 * incr)
-    #pragma omp parallel for schedule(dynamic) private(fin2)
+    	#pragma omp parallel for schedule(static) private(fin2)
 		for (i = 0; i < (size - incr / 2); i += incr) // (i+incr/2) < size
 		{
 			fin2 = min(size - 1, i + incr - 1);
@@ -153,7 +142,12 @@ void ord_secB(float vector[], int size)
 {
 	int i, j;
 	float x;
-
+	/* 
+	 * Este bucle for no se puede paralelizar porque requiere que las anteriores posiciones con respecto a i estén ordenadas. Nos basamos en un bucle en 
+	 * el cual cada iteración utiliza x posiciones de vector, + 1 posición añadida en cada iteración. Si lanzamos 8 hilos por ejemplo, al ejecutar dicho bucle 
+	 * trabajaran en comun en un mismo vector desordenado y en el que probablemente aparecerán inconsistencias.
+	 * En nuestra opinión, este algoritmo debe desarrollarse de manera necesariamente secuencial.
+	 */ 
 	for (int i = 1; i < size; i++)
 	{
 		x = vector[i];
@@ -173,13 +167,15 @@ void ord_secC(float vector[], int size)
 	float temp;
 
 	for (list_length = size; list_length >= 2; list_length--)
-		/* El siguiente for no se puede paralelizar ya que, por ejemplo, en la iteración i=0 
+   /* 
+    * El siguiente for no se puede paralelizar ya que, por ejemplo, en la iteración i=0 
     * puede que haya que escribir en vector[1] y en la iteración siguiente (i=1) hay que leer vector[1].
     * Así pues, si se cumple la condición del "if" hay una dependencia leer después de escribir (RAW)
     * entre la iteración 0 y la 1.
     * [ En general, hay una dependencia RAW entre cualquier iteración, i=k,
     * (que no sea la última) y la siguiente respecto al operando vector[k+1], si se cumple la condición
-    * del "if", cosa que puede ocurrir o no dependiendo de los datos de entrada).] 	*/
+    * del "if", cosa que puede ocurrir o no dependiendo de los datos de entrada).] 	
+	*/
 		for (i = 0; i < list_length - 1; i++)
 			if (vector[i] > vector[i + 1])
 			{
@@ -242,11 +238,11 @@ int main()
 		printf("\nVector antes de ser ordenado: \n");
 		printVector(vini, VECT_SIZE);
 	}
-
+	
 	// 3. Para el primer método de ordenación, copiar vini en vord0, ordenar vord0 y comprobar que el vector queda ordenado
 	//	  Para el resto de métodos, copiar vini en vord, ordendar vord y comprobar que vord queda igual que vord0
 	//	  Para todos los métodos medir e imprimir el tiempo de copiar y ordenar el vector
-
+	
 	for (i = 0; i < NM; i++)
 	{
 		t = omp_get_wtime();
