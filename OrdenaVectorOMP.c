@@ -1,8 +1,20 @@
 /* Ordenación de un vector
- * 
+ *
  * Compilación: gcc -W OrdenaVectorOMP.c -o OrdenaVectorOMP -fopenmp
  * Ejecución: ./OrdenaVectorOMP	
 */
+
+/*
+ * Autores:
+ * - Sergio Jiménez Roncero
+ * - Javier Álvarez Páramo
+ */
+
+/*
+ * Procesador:
+ * - Intel Core i7-7850H (2.20GHz a 4.1GHz (Turbo Boost))
+ * - 6 Cores - 12 Hilos
+ */ 
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,8 +22,8 @@
 #include <omp.h>
 
 #define M 100			// ==> Rango de valores de los componentes: [0, M[
-#define VECT_SIZE 50000 // N.º componentes del vector que se quiere ordenar
-#define NM 4			// N.º de métodos de ordenación que se llamarán desde el programa principal
+#define VECT_SIZE 20000 // N.º componentes del vector que se quiere ordenar
+#define NM 5			// N.º de métodos de ordenación que se llamarán desde el programa principal
 #define min(a, b) ((a) < (b) ? a : b)
 #define FALSE 0
 #define TRUE 1
@@ -117,7 +129,7 @@ void mezcla_ordenada(float vector[], int ini1, int ini2, int fin2)
 
 // Funciones que ordenan los size primeros elementos de un vector
 
-void ord_secA(float vector[], int size)
+void ord_parA(float vector[], int size)
 {
 	int incr, i, fin2;
 	/*
@@ -138,7 +150,7 @@ void ord_secA(float vector[], int size)
 		 * Esto conlleva que está ordenado todo el vector, al ser size <= incr */
 } // Fin de ord_secA
 
-void ord_secB(float vector[], int size)
+void ord_parB(float vector[], int size)
 {
 	int i, j;
 	float x;
@@ -161,7 +173,7 @@ void ord_secB(float vector[], int size)
 	}
 } // Fin de ord_secB
 
-void ord_secC(float vector[], int size)
+void ord_parC(float vector[], int size)
 {
 	int list_length, i;
 	float temp;
@@ -217,6 +229,25 @@ void ord_parD(float vector[], int size)
 		}
 } // Fin de ord_parD
 
+void ord_parDm(float vector[], int size)
+{
+	int phase, i;
+	float temp;
+	/* El siguiente for no se puede paralelizar ya que entre una fase y la siguiente hay dependencias RAW:
+    * por ejemplo, un fase puede escribir en vector[1] y la siguiente lee vector[1]*/
+	for (phase = 0; phase < size; phase++)
+		{
+			#pragma omp parallel for private(temp)
+			for (i = 1; i < size - (phase % 2); i += 2)
+				if (vector[i - 1 + (phase % 2)] > vector[i + (phase % 2)])
+				{
+					temp = vector[i];
+					vector[i] = vector[i - 1 + 2*(phase % 2)];
+					vector[i - 1 + 2*(phase % 2)] = temp;
+				}
+		}
+} // Fin de ord_parDm
+
 int main()
 {
 	int i;
@@ -251,33 +282,33 @@ int main()
 		{
 		case 0:
 			copiarVector(vord0, vini, VECT_SIZE); // vord0 <-- vini
-			printf("Ordenando por el método secuencial A\n");
-			ord_secA(vord0, VECT_SIZE);
-			printf("\nTiempo empleado por método secuencial A: %0.8f milisegundos\n", 1000 * (omp_get_wtime() - t));
+			printf("Ordenando por el método paralelo A\n");
+			ord_parA(vord0, VECT_SIZE);
+			printf("\nTiempo empleado por método paralelo A: %0.8f milisegundos\n", 1000 * (omp_get_wtime() - t));
 			if (estaOrdenado(vord0, VECT_SIZE))
-				printf("\nEl vector obtenido por el método secuencial A está ordenado\n");
+				printf("\nEl vector obtenido por el método paralelo A está ordenado\n");
 			else
-				printf("\nEl vector obtenido por el método secuencial A no está ordenado\n");
+				printf("\nEl vector obtenido por el método paralelo A no está ordenado\n");
 			break;
 		case 1:
 			copiarVector(vord, vini, VECT_SIZE); // vord <-- vini
-			printf("Ordenando por el método secuencial B\n");
-			ord_secB(vord, VECT_SIZE);
-			printf("\nTiempo empleado por método secuencial B: %0.8f milisegundos\n", 1000 * (omp_get_wtime() - t));
+			printf("Ordenando por el método paralelo B\n");
+			ord_parB(vord, VECT_SIZE);
+			printf("\nTiempo empleado por método paralelo B: %0.8f milisegundos\n", 1000 * (omp_get_wtime() - t));
 			if (vectoresIguales(vord0, vord, VECT_SIZE))
-				printf("\nEl vector obtenido por el método secuencial B coincide con el del método secuencial A\n");
+				printf("\nEl vector obtenido por el método paralelo B coincide con el del método paralelo A\n");
 			else
-				printf("\nEl vector obtenido por el método secuencial B no coincide con el del método secuencial A\n");
+				printf("\nEl vector obtenido por el método paralelo B no coincide con el del método paralelo A\n");
 			break;
 		case 2:
 			copiarVector(vord, vini, VECT_SIZE); // vord <-- vini
-			printf("Ordenando por el método secuencial C\n");
-			ord_secC(vord, VECT_SIZE);
-			printf("\nTiempo empleado por método secuencial C: %0.8f milisegundos\n", 1000 * (omp_get_wtime() - t));
+			printf("Ordenando por el método paralelo C\n");
+			ord_parC(vord, VECT_SIZE);
+			printf("\nTiempo empleado por método paralelo C: %0.8f milisegundos\n", 1000 * (omp_get_wtime() - t));
 			if (vectoresIguales(vord0, vord, VECT_SIZE))
-				printf("\nEl vector obtenido por el método secuencial C coincide con el del método secuencial A\n");
+				printf("\nEl vector obtenido por el método paralelo C coincide con el del método paralelo A\n");
 			else
-				printf("\nEl vector obtenido por el método secuencial C no coincide con el del método secuencial A\n");
+				printf("\nEl vector obtenido por el método paralelo C no coincide con el del método paralelo A\n");
 			break;
 		case 3:
 			copiarVector(vord, vini, VECT_SIZE); // vord <-- vini
@@ -285,11 +316,21 @@ int main()
 			ord_parD(vord, VECT_SIZE);
 			printf("\nTiempo empleado por método paralelo D: %0.8f milisegundos\n", 1000 * (omp_get_wtime() - t));
 			if (vectoresIguales(vord0, vord, VECT_SIZE))
-				printf("\nEl vector obtenido por el método paralelo D coincide con el del método secuencial A\n");
+				printf("\nEl vector obtenido por el método paralelo D coincide con el del método paralelo A\n");
 			else
-				printf("\nEl vector obtenido por el método paralelo D no coincide con el del método secuencial A\n");
+				printf("\nEl vector obtenido por el método paralelo D no coincide con el del método paralelo A\n");
 			break;
-		}
+		case 4:
+			copiarVector(vord, vini, VECT_SIZE); // vord <-- vini
+			printf("Ordenando por el método paralelo D mejorado\n");
+			ord_parDm(vord, VECT_SIZE);
+			printf("\nTiempo empleado por método paralelo D mejorado: %0.8f milisegundos\n", 1000 * (omp_get_wtime() - t));
+			if (vectoresIguales(vord0, vord, VECT_SIZE))
+				printf("\nEl vector obtenido por el método paralelo D mejorado coincide con el del método paralelo A\n");
+			else
+				printf("\nEl vector obtenido por el método paralelo D mejorado no coincide con el del método paralelo A\n");
+			break;
+		}	
 	}
 
 	// 4. Imprimir vector ordenado (solo si el número de componentes no es muy grande)
