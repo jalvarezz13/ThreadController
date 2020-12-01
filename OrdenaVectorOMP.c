@@ -14,7 +14,7 @@
  * Procesador:
  * - Intel Core i7-7850H (2.20GHz a 4.1GHz (Turbo Boost))
  * - 6 Cores - 12 Hilos
- */ 
+ */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -53,17 +53,19 @@ void printVector(float vector[], int size)
 
 int estaOrdenado(float vector[], int size)
 {
-    /* Comenzamos a paralelizar el bucle y para ello la primera transformación que hicimos fue pasar de un bucle do-while,
+	/* Comenzamos a paralelizar el bucle y para ello la primera transformación que hicimos fue pasar de un bucle do-while,
 	 * a un bucle for cuya condición era la que este bucle while tiene. Nos dimos cuenta que OpenMP no permitía este tipo de condiciones
 	 * al desconocer el numero de iteraciones que realiza. Entonces convertimo el bucle en uno cuya cabecera era for(i=1; i<size; i++) y con
 	 * if nos permitía saber si el orden del vector era creciente y en ese caso continuar o por el contrario salirnos con la sentencia "break".
 	 * Lo que nos llevó a una segunda apreciación y es que dicha llamada no está permitida al manejar varios hilos de ejecución.
 	 * La CONCLUSIÓN FINAL fue que llegamos a la conclusión de que este bucle no es paralelizable.
 	 */
-  int i=0;
-  do i++; while ((vector[i-1]<=vector[i])&&(i<size-1));
+	int i = 0;
+	do
+		i++;
+	while ((vector[i - 1] <= vector[i]) && (i < size - 1));
 
-  return ((i==size-1)&&(vector[i-1]<=vector[i]));	// TRUE (1) si el vector está ordenado y FALSE (0) en caso contrario
+	return ((i == size - 1) && (vector[i - 1] <= vector[i])); // TRUE (1) si el vector está ordenado y FALSE (0) en caso contrario
 }
 
 int vectoresIguales(float vecta[], float vectb[], int size)
@@ -97,7 +99,7 @@ void mezcla_ordenada(float vector[], int ini1, int ini2, int fin2)
 	i = ini1;
 	j = ini2;
 	do
-	{ // vector[ini1] <=...<= vector[j-1] AND vector[j] <=...<= vector[fin2] AND i < j
+	{													// vector[ini1] <=...<= vector[j-1] AND vector[j] <=...<= vector[fin2] AND i < j
 		while ((vector[i] <= vector[j]) && (i < j - 1)) // 2a condicion para que no adelante i a j (solo se produce al final)
 			i++;
 		if (vector[i] > vector[j])
@@ -105,7 +107,7 @@ void mezcla_ordenada(float vector[], int ini1, int ini2, int fin2)
 			/* Rotamos vector[i], vector[i+1], ...,vector[j-1], vector[j]
 					 * para que vector[j] pase a la posición i y el resto se desplace una posición a la derecha */
 			temp = vector[j];
-     		#pragma omp parallel for schedule(dynamic)
+			#pragma omp parallel for schedule(dynamic)
 			for (k = j; k > i; k--)
 				vector[k] = vector[k - 1];
 			vector[i] = temp;
@@ -126,7 +128,6 @@ void mezcla_ordenada(float vector[], int ini1, int ini2, int fin2)
 	} while (!terminado);
 }
 
-
 // Funciones que ordenan los size primeros elementos de un vector
 
 void ord_parA(float vector[], int size)
@@ -134,10 +135,11 @@ void ord_parA(float vector[], int size)
 	int incr, i, fin2;
 	/*
 	 * Este bucle for externo no se puede paralelizar ya que todavía no están ordenados los componentes del vector ya sean en grupos que 
-	 * la variable 'incr' dicta (2,4,8...) y cuyo orden dependen de que el bucle interno, cuyas iteraciones si han sido paralelizadas, termine correctamente. 
-	 */ 
+	 * la variable 'incr' dicta (2,4,8...) y cuyo orden dependen de que el bucle interno, cuyas iteraciones si han sido paralelizadas, termine correctamente.
+	 * El algoritmo mezcla ordenada requiere que cada mitad de vector esté ordenada a su vez y eso implica que tenga que haber terminado la iteración previa.
+	 */
 	for (incr = 2; incr < 2 * size; incr = 2 * incr)
-    	#pragma omp parallel for schedule(static) private(fin2)
+		#pragma omp parallel for schedule(static) private(fin2)
 		for (i = 0; i < (size - incr / 2); i += incr) // (i+incr/2) < size
 		{
 			fin2 = min(size - 1, i + incr - 1);
@@ -159,7 +161,24 @@ void ord_parB(float vector[], int size)
 	 * el cual cada iteración utiliza x posiciones de vector, + 1 posición añadida en cada iteración. Si lanzamos 8 hilos por ejemplo, al ejecutar dicho bucle 
 	 * trabajaran en comun en un mismo vector desordenado y en el que probablemente aparecerán inconsistencias.
 	 * En nuestra opinión, este algoritmo debe desarrollarse de manera necesariamente secuencial.
-	 */ 
+	 * 
+	 * (R=read; W=write)
+	 * Para i=1 
+	 * R = vector[1] 
+	 * R = vector[0]
+	 * W = vector[1]
+	 * W = vector[2]
+	 * 
+	 * Para i=2
+	 * R = vector[2] 
+	 * R = vector[1]
+	 * W = vector[2]
+	 * W = vector[3]
+	 * 
+	 * Como vemos en este esquema simple se produce una dependencia RAW entre la iteración i=j e i=j+1 ya que en la iteración i=j, dentro del bucle while la primera iteración
+	 * escribiría en el vector[j+1], que en el caso de la siguiente iteracion (i=j+1) leerá dicha posición del vector al hacer "x=vector[j+1]". Por esta dependencia loop-carried
+	 * este bucle no es paralelizable con dicha implementación.
+	 */
 	for (int i = 1; i < size; i++)
 	{
 		x = vector[i];
@@ -177,17 +196,24 @@ void ord_parC(float vector[], int size)
 {
 	int list_length, i;
 	float temp;
-
+	
+	/* 
+	 * Cada iteración tiene por objetivo encontrar el número mayor, y dejarlo apartado en la última posición del vector de tamaño N para esa iteración i=j; para que, 
+	 * de esta forma, en la siguiente iteración (i=j+1), con un vector de tamaño N-1, ya no se contemple ese número grande. Por esa razón, una iteración debe haberse completado 
+	 * y haber retirado su número más grande del campo de visión del vector de la iteración posterior, antes de que esta comience. Si no fuese así, y una iteración posterior comenzase 
+	 * antes de que la anterior previa hubiese terminado, podría ocurrir que, ambas iteraciones escojan el mismo número más grande, y el algoritmo, por tanto no cumpla su cometido. 
+	 * Como curiosidad, la complejidad temporal de este algoritmo viene acotada por O(n^2) porque hay n iteraciones y posiciones, y por cada una, se recorre (n-i) posiciones.
+	 */
 	for (list_length = size; list_length >= 2; list_length--)
-   /* 
-    * El siguiente for no se puede paralelizar ya que, por ejemplo, en la iteración i=0 
-    * puede que haya que escribir en vector[1] y en la iteración siguiente (i=1) hay que leer vector[1].
-    * Así pues, si se cumple la condición del "if" hay una dependencia leer después de escribir (RAW)
-    * entre la iteración 0 y la 1.
-    * [ En general, hay una dependencia RAW entre cualquier iteración, i=k,
-    * (que no sea la última) y la siguiente respecto al operando vector[k+1], si se cumple la condición
-    * del "if", cosa que puede ocurrir o no dependiendo de los datos de entrada).] 	
-	*/
+		/* 
+		* El siguiente for no se puede paralelizar ya que, por ejemplo, en la iteración i=0 
+		* puede que haya que escribir en vector[1] y en la iteración siguiente (i=1) hay que leer vector[1].
+		* Así pues, si se cumple la condición del "if" hay una dependencia leer después de escribir (RAW)
+		* entre la iteración 0 y la 1.
+		* [ En general, hay una dependencia RAW entre cualquier iteración, i=k,
+		* (que no sea la última) y la siguiente respecto al operando vector[k+1], si se cumple la condición
+		* del "if", cosa que puede ocurrir o no dependiendo de los datos de entrada).] 	
+		*/
 		for (i = 0; i < list_length - 1; i++)
 			if (vector[i] > vector[i + 1])
 			{
@@ -202,8 +228,11 @@ void ord_parD(float vector[], int size)
 {
 	int phase, i;
 	float temp;
-	/* El siguiente for no se puede paralelizar ya que entre una fase y la siguiente hay dependencias RAW:
-    * por ejemplo, un fase puede escribir en vector[1] y la siguiente lee vector[1]*/
+
+	/*
+	 * El siguiente for no se puede paralelizar ya que entre una fase y la siguiente hay dependencias RAW:
+     * por ejemplo, un fase puede escribir en vector[1] y la siguiente lee vector[1]
+	 */
 	for (phase = 0; phase < size; phase++)
 		if (phase % 2 == 0)
 		{ // Fase par
@@ -233,19 +262,22 @@ void ord_parDm(float vector[], int size)
 {
 	int phase, i;
 	float temp;
-	/* El siguiente for no se puede paralelizar ya que entre una fase y la siguiente hay dependencias RAW:
-    * por ejemplo, un fase puede escribir en vector[1] y la siguiente lee vector[1]*/
+
+	/*
+	 * El siguiente for no se puede paralelizar ya que entre una fase y la siguiente hay dependencias RAW:
+     * por ejemplo, un fase puede escribir en vector[1] y la siguiente lee vector[1]
+	 */
 	for (phase = 0; phase < size; phase++)
-		{
-			#pragma omp parallel for private(temp)
-			for (i = 1; i < size - (phase % 2); i += 2)
-				if (vector[i - 1 + (phase % 2)] > vector[i + (phase % 2)])
-				{
-					temp = vector[i];
-					vector[i] = vector[i - 1 + 2*(phase % 2)];
-					vector[i - 1 + 2*(phase % 2)] = temp;
-				}
-		}
+	{
+		#pragma omp parallel for private(temp)
+		for (i = 1; i < size - (phase % 2); i += 2)
+			if (vector[i - 1 + (phase % 2)] > vector[i + (phase % 2)])
+			{
+				temp = vector[i];
+				vector[i] = vector[i - 1 + 2 * (phase % 2)];
+				vector[i - 1 + 2 * (phase % 2)] = temp;
+			}
+	}
 } // Fin de ord_parDm
 
 int main()
@@ -269,11 +301,11 @@ int main()
 		printf("\nVector antes de ser ordenado: \n");
 		printVector(vini, VECT_SIZE);
 	}
-	
+
 	// 3. Para el primer método de ordenación, copiar vini en vord0, ordenar vord0 y comprobar que el vector queda ordenado
 	//	  Para el resto de métodos, copiar vini en vord, ordendar vord y comprobar que vord queda igual que vord0
 	//	  Para todos los métodos medir e imprimir el tiempo de copiar y ordenar el vector
-	
+
 	for (i = 0; i < NM; i++)
 	{
 		t = omp_get_wtime();
@@ -330,7 +362,7 @@ int main()
 			else
 				printf("\nEl vector obtenido por el método paralelo D mejorado no coincide con el del método paralelo A\n");
 			break;
-		}	
+		}
 	}
 
 	// 4. Imprimir vector ordenado (solo si el número de componentes no es muy grande)
