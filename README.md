@@ -1,4 +1,4 @@
-<img src="" width="" height="80" align = "left">
+<img src="https://github.com/jalvarezz13/ThreadController/blob/master/images/logo.png" width="" height="80" align = "left">
 
 # ThreadController
 ## Contenido
